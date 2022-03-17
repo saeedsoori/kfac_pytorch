@@ -551,8 +551,13 @@ class KFAC(optim.Optimizer):
         end = time.time()
         self.timing['update_grad_and_step'] += end - start
 
-        self.timing['memory_usage'] += memory_usage()
+        self.timing['memory_usage'] += self.memory_usage()
         params['step'] += 1
+        
+        for k in self.timing:
+            print('{} = {}\n'.format( k, self.timing[k]))
+        print('======================\n', flush=True)
+        self.timing = {}
 
         return loss
 
