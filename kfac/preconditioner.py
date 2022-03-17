@@ -8,7 +8,7 @@ import torch.optim as optim
 from . import layers as kfac_layers
 from . import utils
 from . import comm
-
+import time
 try:
     from torch.cuda.amp import autocast
     TORCH_FP16 = True
@@ -230,6 +230,7 @@ class KFAC(optim.Optimizer):
         self.known_modules = known_modules
         self.verbose = verbose
         self.workers_assigned = False
+        self.timing = {}
 
         comm.init_comm_backend()
         if self.comm_method == CommMethod.COMM_OPT:
@@ -484,6 +485,14 @@ class KFAC(optim.Optimizer):
           closure: for compatibility with the base optimizer class.
               `closure` is ignored by KFAC
         """
+        self.timing['allreduce_factors'] = 0
+        self.timing['compute_factors'] = 0
+        self.timing['update_inv'] = 0
+        self.timing['broadcast_inv'] = 0
+        self.timing['broadcast_grad'] = 0
+        self.timing['precondition'] = 0
+        self.timing['update_grad_and_step'] = 0
+        self.timing['memory_usage'] = 0
         loss = None
         if closure is not None:
             with torch.enable_grad():
@@ -493,8 +502,15 @@ class KFAC(optim.Optimizer):
 
         if params['step'] % params['factor_update_freq'] == 0:
             if not self.compute_factor_in_hook:
-                self.compute_factors(alpha=params['factor_decay'])
+              start = time.time()
+              self.compute_factors(alpha=params['factor_decay'])
+              end = time.time()
+              self.timing['compute_factors'] += end - start
+            start = time.time()
             self.allreduce_factors()
+            end = time.time()
+            self.timing['allreduce_factors'] += end - start
+
 
         # We do this after compute_factors() because the buffers
         # are not instantiated until this point and we use the size of the
@@ -504,20 +520,38 @@ class KFAC(optim.Optimizer):
             self.workers_assigned = True
 
         if params['step'] % params['inv_update_freq'] == 0:
+            start = time.time()
             self.compute_inverses(damping=params['damping'])
+            end = time.time()
+            self.timing['update_inv'] += end - start
+
             if self.comm_method in \
                     [CommMethod.COMM_OPT, CommMethod.HYBRID_OPT]:
+                start = time.time()
                 self.broadcast_inverses()
+                end = time.time()
+                self.timing['broadcast_inv'] += end - start
 
+        start = time.time()
         self.compute_preconditioned_gradients(damping=params['damping'])
+        end = time.time()
+        self.timing['precondition'] += end - start
+
         if self.comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT]:
+            start = time.time()
             self.broadcast_gradients()
+            end = time.time()
+            self.timing['broadcast_grad'] += end - start
+
 
         scale = None if params['kl_clip'] is None \
                      else self._compute_grad_scale()
-
+        start = time.time()
         self.update_gradients(scale)
+        end = time.time()
+        self.timing['update_grad_and_step'] += end - start
 
+        self.timing['memory_usage'] += memory_usage()
         params['step'] += 1
 
         return loss
@@ -610,7 +644,7 @@ class KFAC(optim.Optimizer):
             b += sum(sizeof_tensor(value) for key, value in layer.state.items())
             b += sum(map(sizeof_tensor, layer.a_inputs))
             b += sum(map(sizeof_tensor, layer.g_outputs))
-            b += sizeof_tensor(layer.preconditioned_gradient)
+            # b += sizeof_tensor(layer.preconditioned_gradient)
         return b
 
     def _assign_workers(self):
