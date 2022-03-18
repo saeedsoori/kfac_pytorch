@@ -53,6 +53,9 @@ def get_imagenet(args):
 def make_sampler_and_loader(args, train_dataset, val_dataset):
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
+    kwargs['prefetch_factor'] = 8
+    kwargs['persistent_workers'] = True
+    kwargs['drop_last'] = True
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset, num_replicas=args.backend.size(), rank=args.backend.rank())
