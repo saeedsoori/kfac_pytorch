@@ -502,14 +502,20 @@ class KFAC(optim.Optimizer):
 
         if params['step'] % params['factor_update_freq'] == 0:
             if not self.compute_factor_in_hook:
-              start = time.time()
+              start = torch.cuda.Event(enable_timing=True)
+              end = torch.cuda.Event(enable_timing=True)
+              start.record()
               self.compute_factors(alpha=params['factor_decay'])
-              end = time.time()
-              self.timing['compute_factors'] += end - start
-            start = time.time()
+              end.record()
+              torch.cuda.synchronize()
+              self.timing['compute_factors'] += start.elapsed_time(end)
+
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
             self.allreduce_factors()
-            end = time.time()
-            self.timing['allreduce_factors'] += end - start
+            end.record()
+            torch.cuda.synchronize()
+            self.timing['allreduce_factors'] += start.elapsed_time(end)
 
 
         # We do this after compute_factors() because the buffers
@@ -520,36 +526,46 @@ class KFAC(optim.Optimizer):
             self.workers_assigned = True
 
         if params['step'] % params['inv_update_freq'] == 0:
-            start = time.time()
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
             self.compute_inverses(damping=params['damping'])
-            end = time.time()
-            self.timing['update_inv'] += end - start
+            end.record()
+            torch.cuda.synchronize()
+
+            self.timing['update_inv'] += start.elapsed_time(end)
 
             if self.comm_method in \
                     [CommMethod.COMM_OPT, CommMethod.HYBRID_OPT]:
-                start = time.time()
+                start.record()
                 self.broadcast_inverses()
-                end = time.time()
-                self.timing['broadcast_inv'] += end - start
+                end.record()
+                torch.cuda.synchronize()
+                self.timing['broadcast_inv'] += start.elapsed_time(end)
 
-        start = time.time()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
         self.compute_preconditioned_gradients(damping=params['damping'])
-        end = time.time()
-        self.timing['precondition'] += end - start
+        end.record()
+        torch.cuda.synchronize()
+        self.timing['precondition'] += start.elapsed_time(end)
 
         if self.comm_method in [CommMethod.MEM_OPT, CommMethod.HYBRID_OPT]:
-            start = time.time()
+            start.record()
             self.broadcast_gradients()
-            end = time.time()
-            self.timing['broadcast_grad'] += end - start
+            end.record()
+            torch.cuda.synchronize()
+            self.timing['broadcast_grad'] += start.elapsed_time(end)
 
 
         scale = None if params['kl_clip'] is None \
                      else self._compute_grad_scale()
-        start = time.time()
+        start.record()
         self.update_gradients(scale)
-        end = time.time()
-        self.timing['update_grad_and_step'] += end - start
+        end.record()
+        torch.cuda.synchronize()
+        self.timing['update_grad_and_step'] += start.elapsed_time(end)
 
         self.timing['memory_usage'] += self.memory_usage()
         params['step'] += 1
