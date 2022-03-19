@@ -502,6 +502,7 @@ class KFAC(optim.Optimizer):
 
         if params['step'] % params['factor_update_freq'] == 0:
             if not self.compute_factor_in_hook:
+              torch.cuda.synchronize()
               start = torch.cuda.Event(enable_timing=True)
               end = torch.cuda.Event(enable_timing=True)
               start.record()
@@ -512,6 +513,7 @@ class KFAC(optim.Optimizer):
 
             start = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
+            start.record()
             self.allreduce_factors()
             end.record()
             torch.cuda.synchronize()
