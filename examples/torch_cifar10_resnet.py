@@ -102,6 +102,12 @@ def parse_args():
     parser.add_argument('--local_rank', type=int, default=0,
                         help='local rank for distributed training')
 
+    parser.add_argument('--url', type=str, default='env://')
+    parser.add_argument('--node-idx', type=int, default=0)
+    parser.add_argument('--nproc-per-node', type=int, default=8)
+    parser.add_argument('--world-size', type=int, default=64)
+
+
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -110,7 +116,11 @@ def parse_args():
 def main():
     args = parse_args()
 
-    torch.distributed.init_process_group(backend=args.backend, init_method='env://')
+    #torch.distributed.init_process_group(backend=args.backend, init_method='env://')
+    
+    torch.distributed.init_process_group(backend=args.backend, init_method=args.url, 
+                                         world_size=args.world_size, rank=(args.node_idx*args.nproc_per_node)+args.local_rank)
+
     kfac.comm.init_comm_backend() 
 
     if args.cuda:
